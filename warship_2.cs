@@ -3,6 +3,9 @@ using System;
 class JuegoBatallaNaval
 {
     static Random aleatorio = new Random();
+    static bool cpuTieneObjetivo = false;
+    static int ultimoImpactoF = -1;
+    static int ultimoImpactoC = -1;
 
     static void Main()
     {
@@ -18,6 +21,7 @@ class JuegoBatallaNaval
 
         int elegido = aleatorio.Next(0, 5);
         char[,] tableroCpuReal = tablerosCpu[elegido];
+        Console.WriteLine($"[DEBUG] La CPU usara el Tablero #{elegido + 1}");
 
         // Tableros para disparos
         char[,] tableroVisibleCpu = CrearTableroOculto();
@@ -129,12 +133,49 @@ class JuegoBatallaNaval
 
     static bool TiroCpu(char[,] tableroJugadorReal, char[,] tableroVisibleJugador)
     {
-        int f, c;
-        do
+        int f = -1, c = -1;
+
+        if (cpuTieneObjetivo)
         {
-            f = aleatorio.Next(0, 10);
-            c = aleatorio.Next(0, 10);
-        } while (tableroVisibleJugador[f, c] == 'X' || tableroVisibleJugador[f, c] == 'O');
+            int[,] direcciones = {
+            { -1, 0 },
+            { 1, 0 }, 
+            { 0, -1 }, 
+            { 0, 1 }   
+        };
+
+            bool disparoEncontrado = false;
+
+            for (int i = 0; i < 4; i++)
+            {
+                int nf = ultimoImpactoF + direcciones[i, 0];
+                int nc = ultimoImpactoC + direcciones[i, 1];
+
+                if (nf >= 0 && nf < 10 && nc >= 0 && nc < 10 &&
+                    tableroVisibleJugador[nf, nc] != 'X' &&
+                    tableroVisibleJugador[nf, nc] != 'O')
+                {
+                    f = nf;
+                    c = nc;
+                    disparoEncontrado = true;
+                    break;
+                }
+            }
+
+            if (!disparoEncontrado)
+            {
+                cpuTieneObjetivo = false;
+            }
+        }
+
+        if (!cpuTieneObjetivo)
+        {
+            do
+            {
+                f = aleatorio.Next(0, 10);
+                c = aleatorio.Next(0, 10);
+            } while (tableroVisibleJugador[f, c] == 'X' || tableroVisibleJugador[f, c] == 'O');
+        }
 
         Console.WriteLine($"La CPU dispara a ({f}, {c})...");
         Console.ReadKey();
@@ -144,6 +185,11 @@ class JuegoBatallaNaval
             Console.WriteLine("¡Te dio!");
             tableroJugadorReal[f, c] = 'X';
             tableroVisibleJugador[f, c] = 'X';
+
+            cpuTieneObjetivo = true;
+            ultimoImpactoF = f;
+            ultimoImpactoC = c;
+
             ImprimirTablero(tableroVisibleJugador);
             return true;
         }
@@ -151,6 +197,7 @@ class JuegoBatallaNaval
         {
             Console.WriteLine("Falló.");
             tableroVisibleJugador[f, c] = 'O';
+
             ImprimirTablero(tableroVisibleJugador);
             return false;
         }
