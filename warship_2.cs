@@ -1,205 +1,206 @@
 using System;
+using System.IO;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
 
 class JuegoBatallaNaval
 {
+    static StreamWriter escritor;
+    static char[,] miTablero;
+    static char[,] tableroOponente;
+    static int ultimoF, ultimoC;
+    static AutoResetEvent miTurnoEvento = new AutoResetEvent(false);
+    static AutoResetEvent juegoIniciadoEvento = new AutoResetEvent(false);
+    static bool juegoTerminado = false;
+    static bool esJugador1;
     static Random aleatorio = new Random();
-    static bool cpuTieneObjetivo = false;
-    static int ultimoImpactoF = -1;
-    static int ultimoImpactoC = -1;
 
     static void Main()
     {
-        char[,] tableroJugador = TableroJugadorFijo();
+        miTablero = ElegirTableroAleatorio();
+        tableroOponente = CrearTableroOculto();
 
-        // Tableros CPU
-        char[][,] tablerosCpu = new char[5][,];
-        tablerosCpu[0] = TableroCpu1();
-        tablerosCpu[1] = TableroCpu2();
-        tablerosCpu[2] = TableroCpu3();
-        tablerosCpu[3] = TableroCpu4();
-        tablerosCpu[4] = TableroCpu5();
-
-        int elegido = aleatorio.Next(0, 5);
-        char[,] tableroCpuReal = tablerosCpu[elegido];
-        Console.WriteLine($"[DEBUG] La CPU usara el Tablero #{elegido + 1}");
-
-        // Tableros para disparos
-        char[,] tableroVisibleCpu = CrearTableroOculto();
-        char[,] tableroVisibleJugador = CrearTableroOculto();
-
-        Console.WriteLine("Tu tablero (real):");
-        ImprimirTablero(tableroJugador);
-        Console.WriteLine("\nPresiona una tecla para comenzar la batalla...");
-        Console.ReadKey();
-        Console.Clear();
-
-        bool turnoJugador = true;
-
-        while (true)
+        TcpClient cliente;
+        try
         {
-            if (turnoJugador)
-            {
-                Console.WriteLine("=== TU TURNO ===");
-                ImprimirTablero(tableroVisibleCpu);
-
-                bool repite = TiroJugador(tableroCpuReal, tableroVisibleCpu);
-                if (!QuedanBarcos(tableroCpuReal))
-                {
-                    Console.WriteLine("\n¡Ganaste! Hundiste todos los barcos de la CPU.");
-                    break;
-                }
-
-                if (!repite)
-                {
-                    turnoJugador = false;
-                    Console.WriteLine("\nFallaste. Turno de la CPU...");
-                    Console.ReadKey();
-                    Console.Clear();
-                }
-            }
-            else
-            {
-                Console.WriteLine("=== TURNO DE LA CPU ===");
-                ImprimirTablero(tableroVisibleJugador);
-
-                bool repite = TiroCpu(tableroJugador, tableroVisibleJugador);
-                if (!QuedanBarcos(tableroJugador))
-                {
-                    Console.WriteLine("\nLa CPU ganó. Hundió todos tus barcos.");
-                    Console.WriteLine("\nTu tablero real:");
-                    ImprimirTablero(tableroJugador);
-                    break;
-                }
-
-                if (!repite)
-                {
-                    turnoJugador = true;
-                    Console.WriteLine("\nLa CPU falló. ¡Tu turno!");
-                    Console.ReadKey();
-                    Console.Clear();
-                }
-            }
+            cliente = new TcpClient("127.0.0.1", 5007);
+        }
+        catch
+        {
+            Console.WriteLine("No se pudo conectar al servidor. Asegurate de que el servidor este corriendo.");
+            Console.ReadKey();
+            return;
         }
 
-        Console.WriteLine("\nJuego terminado. Presiona una tecla para salir.");
+        escritor = new StreamWriter(cliente.GetStream(), new UTF8Encoding(false)) { AutoFlush = true };
+        StreamReader lector = new StreamReader(cliente.GetStream(), Encoding.UTF8);
+
+        Thread hiloRecepcion = new Thread(() => RecibirMensajes(lector));
+        hiloRecepcion.IsBackground = true;
+        hiloRecepcion.Start();
+
+        Console.WriteLine("Conectado al servidor. Esperando segundo jugador...");
+        juegoIniciadoEvento.WaitOne();
+
+        if (juegoTerminado) return;
+
+        Console.Clear();
+        if (esJugador1)
+            Console.WriteLine("=== WARSHIP - Jugador 1 === (atacas primero)");
+        else
+            Console.WriteLine("=== WARSHIP - Jugador 2 === (espera tu turno)");
+
+        Console.WriteLine("\nTu tablero con tus barcos (#):");
+        ImprimirTablero(miTablero);
+
+        while (!juegoTerminado)
+        {
+            miTurnoEvento.WaitOne();
+
+            if (juegoTerminado) break;
+
+            Console.WriteLine("\n=== TU TURNO ===");
+            Console.WriteLine("\nTablero rival (tus disparos):");
+            ImprimirTablero(tableroOponente);
+
+            RealizarDisparo();
+        }
+
+        Console.WriteLine("\nPresiona una tecla para salir.");
         Console.ReadKey();
     }
 
-    static bool TiroJugador(char[,] tableroCpuReal, char[,] tableroVisibleCpu)
+    static void RealizarDisparo()
     {
         while (true)
         {
             try
             {
-                Console.Write("Fila (0-9): ");
+                Console.Write("\nFila (0-9): ");
                 int f = int.Parse(Console.ReadLine());
                 Console.Write("Columna (0-9): ");
                 int c = int.Parse(Console.ReadLine());
 
                 if (f < 0 || f > 9 || c < 0 || c > 9)
                 {
-                    Console.WriteLine("X Coordenadas fuera del tablero.");
+                    Console.WriteLine("Coordenadas fuera del tablero (0-9).");
                     continue;
                 }
 
-                if (tableroVisibleCpu[f, c] == 'X' || tableroVisibleCpu[f, c] == 'O')
+                if (tableroOponente[f, c] == 'X' || tableroOponente[f, c] == 'O')
                 {
-                    Console.WriteLine("X Ya disparaste ahí.");
+                    Console.WriteLine("Ya disparaste ahi, elige otra celda.");
                     continue;
                 }
 
-                if (tableroCpuReal[f, c] == '#')
-                {
-                    Console.WriteLine("¡Impacto!");
-                    tableroVisibleCpu[f, c] = 'X';
-                    tableroCpuReal[f, c] = 'X';
-                    ImprimirTablero(tableroVisibleCpu);
-                    return true;
-                }
-                else
-                {
-                    Console.WriteLine("Agua.");
-                    tableroVisibleCpu[f, c] = 'O';
-                    ImprimirTablero(tableroVisibleCpu);
-                    return false;
-                }
+                ultimoF = f;
+                ultimoC = c;
+                escritor.WriteLine("SHOT|" + f + "|" + c);
+                break;
             }
             catch
             {
-                Console.WriteLine("Entrada inválida.");
+                Console.WriteLine("Entrada invalida, ingresa un numero.");
             }
         }
     }
 
-    static bool TiroCpu(char[,] tableroJugadorReal, char[,] tableroVisibleJugador)
+    static void RecibirMensajes(StreamReader lector)
     {
-        int f = -1, c = -1;
-
-        if (cpuTieneObjetivo)
+        try
         {
-            int[,] direcciones = {
-            { -1, 0 },
-            { 1, 0 }, 
-            { 0, -1 }, 
-            { 0, 1 }   
-        };
-
-            bool disparoEncontrado = false;
-
-            for (int i = 0; i < 4; i++)
+            while (!juegoTerminado)
             {
-                int nf = ultimoImpactoF + direcciones[i, 0];
-                int nc = ultimoImpactoC + direcciones[i, 1];
+                string msg = lector.ReadLine();
+                if (msg == null) break;
+                msg = msg.Trim();
+                if (msg.Length == 0) continue;
+                ProcesarMensaje(msg);
+            }
+        }
+        catch
+        {
+            Console.WriteLine("\nConexion con el servidor perdida.");
+            juegoTerminado = true;
+            miTurnoEvento.Set();
+            juegoIniciadoEvento.Set();
+        }
+    }
 
-                if (nf >= 0 && nf < 10 && nc >= 0 && nc < 10 &&
-                    tableroVisibleJugador[nf, nc] != 'X' &&
-                    tableroVisibleJugador[nf, nc] != 'O')
+    static void ProcesarMensaje(string msg)
+    {
+        string[] parts = msg.Split('|');
+
+        switch (parts[0])
+        {
+            case "START":
+                esJugador1 = parts[1] == "0";
+                juegoIniciadoEvento.Set();
+                break;
+
+            case "YOUR_TURN":
+                miTurnoEvento.Set();
+                break;
+
+            case "WAIT":
+                Console.WriteLine("\nEsperando al oponente...");
+                break;
+
+            case "HIT":
+                tableroOponente[ultimoF, ultimoC] = 'X';
+                Console.WriteLine("\n¡IMPACTO! Puedes disparar de nuevo.");
+                Console.WriteLine("\nTablero rival:");
+                ImprimirTablero(tableroOponente);
+                break;
+
+            case "MISS":
+                tableroOponente[ultimoF, ultimoC] = 'O';
+                Console.WriteLine("\nAgua. Turno del oponente.");
+                break;
+
+            case "WIN":
+                tableroOponente[ultimoF, ultimoC] = 'X';
+                Console.WriteLine("\n¡¡GANASTE!! Hundiste todos los barcos enemigos.");
+                Console.WriteLine("\nTablero final rival:");
+                ImprimirTablero(tableroOponente);
+                juegoTerminado = true;
+                miTurnoEvento.Set();
+                break;
+
+            case "LOSE":
+                Console.WriteLine("\nPerdiste. El oponente hundio todos tus barcos.");
+                Console.WriteLine("\nTu tablero final:");
+                ImprimirTablero(miTablero);
+                juegoTerminado = true;
+                miTurnoEvento.Set();
+                break;
+
+            case "INCOMING":
+                if (parts.Length < 3) break;
+                int f = int.Parse(parts[1]);
+                int c = int.Parse(parts[2]);
+                Console.WriteLine("\n--- El oponente dispara en (" + f + ", " + c + ")...");
+
+                if (miTablero[f, c] == '#')
                 {
-                    f = nf;
-                    c = nc;
-                    disparoEncontrado = true;
-                    break;
+                    miTablero[f, c] = 'X';
+                    Console.WriteLine("¡Te dio!");
+                    ImprimirTablero(miTablero);
+
+                    if (!QuedanBarcos(miTablero))
+                        escritor.WriteLine("RESULT|WIN");
+                    else
+                        escritor.WriteLine("RESULT|HIT");
                 }
-            }
-
-            if (!disparoEncontrado)
-            {
-                cpuTieneObjetivo = false;
-            }
-        }
-
-        if (!cpuTieneObjetivo)
-        {
-            do
-            {
-                f = aleatorio.Next(0, 10);
-                c = aleatorio.Next(0, 10);
-            } while (tableroVisibleJugador[f, c] == 'X' || tableroVisibleJugador[f, c] == 'O');
-        }
-
-        Console.WriteLine($"La CPU dispara a ({f}, {c})...");
-        Console.ReadKey();
-
-        if (tableroJugadorReal[f, c] == '#')
-        {
-            Console.WriteLine("¡Te dio!");
-            tableroJugadorReal[f, c] = 'X';
-            tableroVisibleJugador[f, c] = 'X';
-
-            cpuTieneObjetivo = true;
-            ultimoImpactoF = f;
-            ultimoImpactoC = c;
-
-            ImprimirTablero(tableroVisibleJugador);
-            return true;
-        }
-        else
-        {
-            Console.WriteLine("Falló.");
-            tableroVisibleJugador[f, c] = 'O';
-
-            ImprimirTablero(tableroVisibleJugador);
-            return false;
+                else
+                {
+                    if (miTablero[f, c] == '~') miTablero[f, c] = 'O';
+                    Console.WriteLine("Fallo. ¡Prepara tu ataque!");
+                    ImprimirTablero(miTablero);
+                    escritor.WriteLine("RESULT|MISS");
+                }
+                break;
         }
     }
 
@@ -221,9 +222,20 @@ class JuegoBatallaNaval
         return t;
     }
 
-    static char[,] CrearTableroOculto()
+    static char[,] CrearTableroOculto() { return InicializarTablero(); }
+
+    static char[,] ElegirTableroAleatorio()
     {
-        return InicializarTablero();
+        int opcion = aleatorio.Next(0, 6);
+        switch (opcion)
+        {
+            case 0: return Tablero1();
+            case 1: return Tablero2();
+            case 2: return Tablero3();
+            case 3: return Tablero4();
+            case 4: return Tablero5();
+            default: return Tablero6();
+        }
     }
 
     static void ImprimirTablero(char[,] tablero)
@@ -238,7 +250,7 @@ class JuegoBatallaNaval
         }
     }
 
-    static char[,] TableroJugadorFijo()
+    static char[,] Tablero1()
     {
         char[,] t = InicializarTablero();
         t[0, 0] = '#'; t[0, 1] = '#';
@@ -249,7 +261,7 @@ class JuegoBatallaNaval
         return t;
     }
 
-    static char[,] TableroCpu1()
+    static char[,] Tablero2()
     {
         char[,] t = InicializarTablero();
         t[0, 0] = '#'; t[0, 1] = '#';
@@ -260,7 +272,7 @@ class JuegoBatallaNaval
         return t;
     }
 
-    static char[,] TableroCpu2()
+    static char[,] Tablero3()
     {
         char[,] t = InicializarTablero();
         t[1, 1] = '#'; t[1, 2] = '#';
@@ -271,7 +283,7 @@ class JuegoBatallaNaval
         return t;
     }
 
-    static char[,] TableroCpu3()
+    static char[,] Tablero4()
     {
         char[,] t = InicializarTablero();
         t[4, 4] = '#'; t[4, 5] = '#';
@@ -282,7 +294,7 @@ class JuegoBatallaNaval
         return t;
     }
 
-    static char[,] TableroCpu4()
+    static char[,] Tablero5()
     {
         char[,] t = InicializarTablero();
         t[9, 9] = '#'; t[8, 9] = '#';
@@ -293,7 +305,7 @@ class JuegoBatallaNaval
         return t;
     }
 
-    static char[,] TableroCpu5()
+    static char[,] Tablero6()
     {
         char[,] t = InicializarTablero();
         t[0, 5] = '#'; t[1, 5] = '#';
